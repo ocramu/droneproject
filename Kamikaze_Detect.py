@@ -1,19 +1,18 @@
 import cv2
-import numpy as np
 import pygetwindow as gw
 import dxcam
 from ultralytics import YOLO
-import torch
+import ctypes
+
+# 1. FIX DPI SCALING: Tells Windows to give us the REAL pixel coordinates
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    ctypes.windll.user32.SetProcessDPIAware()
 
 # --- CONFIG ---
 GAME_KEYWORDS = ["FPV", "Kamikaze", "Drone"]
-# Use the "Nano" version for maximum speed
 model = YOLO("yolov8n.pt") 
-
-# Automatically use GPU if you have an NVIDIA card
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model.to(device)
-print(f"Running on: {device}")
 
 def find_game_window(keywords):
     for window in gw.getAllWindows():
@@ -24,23 +23,29 @@ def find_game_window(keywords):
 
 target_window = find_game_window(GAME_KEYWORDS)
 
-if not target_window:
-    print("❌ Game window not found!")
+if not target_window or target_window.width <= 0:
+    print("❌ Game window not found or is minimized!")
     exit()
 
-# Set up capture region
-region = (target_window.left, target_window.top, target_window.right, target_window.bottom)
-camera = dxcam.create(region=region, output_color="BGR")
+# 2. CLEAN COORDINATES: DXcam hates negative numbers or zero-width regions
+# We ensure the coordinates are within the screen boundaries
+left = max(0, target_window.left)
+top = max(0, target_window.top)
+right = max(left + 100, target_window.right)
+bottom = max(top + 100, target_window.bottom)
 
-# Performance optimization: Start capture at 30 FPS to save CPU
-camera.start(target_fps=30)
+region = (left, top, right, bottom)
+print(f"✅ Capturing Region: {region} for window '{target_window.title}'")
+
+# Initialize Camera
+try:
+    camera = dxcam.create(output_color="BGR")
+    camera.start(region=region, target_fps=30)
+except Exception as e:
+    print(f"❌ DXcam failed to start: {e}")
+    exit()
 
 cv2.namedWindow("AI Overlay", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("AI Overlay", 800, 600)
-
-print("Starting Fast Detection. Press 'q' to quit.")
-
-frame_count = 0
 
 try:
     while True:
@@ -48,29 +53,14 @@ try:
         if frame is None:
             continue
 
-        frame_count += 1
-        # Skip every other frame to keep the game smooth
-        if frame_count % 2 != 0:
-            continue
-
-        # 1. Resize to 416px for a massive speed boost
-        # YOLOv8 processes smaller images much faster than 1080p
+        # Resize for speed (The 'Lag' fix from before)
         input_frame = cv2.resize(frame, (416, 416))
 
-        # 2. Run detection (0=person, 2=car, 7=truck)
-        # stream=True is more memory efficient
-        results = model.predict(
-            source=input_frame, 
-            classes=[0, 2, 7], 
-            conf=0.45, 
-            verbose=False, 
-            imgsz=416,
-            half=True if device == 'cuda' else False # Use FP16 if on GPU
-        )
+        # Run AI (0=person, 2=car, 7=truck)
+        results = model.predict(input_frame, classes=[0, 2, 7], conf=0.45, verbose=False, imgsz=416)
 
-        # 3. Render and Display
-        annotated_frame = results[0].plot()
-        cv2.imshow("AI Overlay", annotated_frame)
+        # Show it
+        cv2.imshow("AI Overlay", results[0].plot())
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

@@ -3,69 +3,74 @@ import numpy as np
 import pygetwindow as gw
 import dxcam
 from ultralytics import YOLO
+import torch
 
-# INSTALL BEFORE RUNNING
-# pip install ultralytics opencv-python numpy pygetwindow dxcam
+# --- CONFIG ---
+GAME_KEYWORDS = ["FPV", "Kamikaze", "Drone"]
+# Use the "Nano" version for maximum speed
+model = YOLO("yolov8n.pt") 
 
-# --- CONFIGURATION ---
-# Common names for FPV sims: "FPV Military", "Kamikaze Drone", "Liftoff"
-GAME_TITLE_KEYWORDS = ["FPV", "Kamikaze", "Drone"]
-MODEL_PATH = "yolov8n.pt"  # Nano is best for low latency
-# ---------------------
+# Automatically use GPU if you have an NVIDIA card
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model.to(device)
+print(f"Running on: {device}")
 
 def find_game_window(keywords):
-    """Finds the first window that matches keywords."""
     for window in gw.getAllWindows():
         if any(word.lower() in window.title.lower() for word in keywords):
-            # Avoid picking up this script's own display window
-            if "Detection" in window.title:
-                continue
-            return window
+            if "AI Overlay" not in window.title:
+                return window
     return None
 
-print("Loading YOLO model...")
-model = YOLO(MODEL_PATH)
-
-print("Searching for FPV Game window...")
-target_window = find_game_window(GAME_TITLE_KEYWORDS)
+target_window = find_game_window(GAME_KEYWORDS)
 
 if not target_window:
-    print("Could not find the game window. Available windows:")
-    for win in gw.getAllTitles():
-        if win: print(f" - {win}")
+    print("❌ Game window not found!")
     exit()
 
-print(f"Target Found: {target_window.title}")
+# Set up capture region
+region = (target_window.left, target_window.top, target_window.right, target_window.bottom)
+camera = dxcam.create(region=region, output_color="BGR")
 
-# Initialize DXcam for high-performance capture
-# We define the 'region' to capture only the game window area
-left, top, right, bottom = target_window.left, target_window.top, target_window.right, target_window.bottom
-camera = dxcam.create(region=(left, top, right, bottom))
+# Performance optimization: Start capture at 30 FPS to save CPU
+camera.start(target_fps=30)
 
-cv2.namedWindow("FPV Detection", cv2.WINDOW_NORMAL)
-print("Detection Started. Press 'q' to quit.")
+cv2.namedWindow("AI Overlay", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("AI Overlay", 800, 600)
 
-# Start the capture loop
-camera.start(target_fps=60) # Threaded capture for performance
+print("Starting Fast Detection. Press 'q' to quit.")
+
+frame_count = 0
 
 try:
     while True:
-        # Get the latest frame from the game
         frame = camera.get_latest_frame()
-        
         if frame is None:
             continue
 
-        # Convert RGB (DXcam) to BGR (OpenCV)
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        frame_count += 1
+        # Skip every other frame to keep the game smooth
+        if frame_count % 2 != 0:
+            continue
 
-        # Detection: 0=person, 2=car, 7=truck (standard YOLO military-like targets)
-        results = model(frame_bgr, classes=[0, 2, 7], verbose=False, conf=0.4)
-        
-        # Draw results
+        # 1. Resize to 416px for a massive speed boost
+        # YOLOv8 processes smaller images much faster than 1080p
+        input_frame = cv2.resize(frame, (416, 416))
+
+        # 2. Run detection (0=person, 2=car, 7=truck)
+        # stream=True is more memory efficient
+        results = model.predict(
+            source=input_frame, 
+            classes=[0, 2, 7], 
+            conf=0.45, 
+            verbose=False, 
+            imgsz=416,
+            half=True if device == 'cuda' else False # Use FP16 if on GPU
+        )
+
+        # 3. Render and Display
         annotated_frame = results[0].plot()
-
-        cv2.imshow("FPV Detection", annotated_frame)
+        cv2.imshow("AI Overlay", annotated_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

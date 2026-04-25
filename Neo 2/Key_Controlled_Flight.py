@@ -1,131 +1,123 @@
-import wda
 from pynput import keyboard
+from pynput.mouse import Controller as MouseController, Button
 import time
 
-# --- Configuration ---
-# The IP address of your iPhone running WebDriverAgent
-DEVICE_URL = 'http://192.168.1.XXX:8100'
+mouse = MouseController()
 
-# iPhone 15 Pro Max Logical Coordinates (Landscape max: 932x430)
-# These are estimates based on standard UI layouts. You will need to fine-tune 
-# these based on your phone's specific logical coordinate grid.
-SMALL_BTN_X, SMALL_BTN_Y = 80, 215       # The small takeoff/land button on the left edge
-LARGE_BTN_X, LARGE_BTN_Y = 466, 215      # The large center takeoff/land confirmation button
-L_JOY_X, L_JOY_Y = 180, 300              # Center of the Left Joystick
-R_JOY_X, R_JOY_Y = 752, 300              # Center of the Right Joystick
+# --- Screen Coordinate Configuration ---
+BTN_PRE_TAKEOFF = (507, 447)   
+BTN_LARGE_TAKEOFF = (856, 534) 
+BTN_PRE_LAND = (507, 447)      
+BTN_LARGE_LAND = (856, 534)    
 
-DRAG_DIST = 40  # How far (in logical pixels) to swipe the joystick from center
+# Joysticks
+L_JOY = (601, 693)  
+R_JOY = (1106, 695) 
+DRAG_DIST = 60      
 
-# Initialize the WDA Client
-try:
-    c = wda.Client(DEVICE_URL)
-except Exception as e:
-    print(f"Could not connect to iPhone. Is WDA running at {DEVICE_URL}?")
-    exit()
+active_keys = set()
 
-# State Machine: Tracks the current phase of the flight
-state = "GROUNDED"
-active_keys = set() # Prevents spamming actions when a key is held down
-
-def process_controls(key):
-    global state
+def perform_drag(start_pos, target_pos):
+    """Simulates a human dragging a finger on a screen across multiple small steps."""
+    # 1. Snap to joystick center
+    mouse.position = start_pos
+    time.sleep(0.02)
     
-    # -----------------------------------------
-    # STATE 1: Grounded (Ready for pre-takeoff)
-    # -----------------------------------------
-    if state == "GROUNDED":
-        if hasattr(key, 'char') and key.char == 'y':
-            print("\n[Action] Tapping small Takeoff button...")
-            c.tap(SMALL_BTN_X, SMALL_BTN_Y)
-            state = "PRE_TAKEOFF"
-            print(">>> STATUS: PRE-TAKEOFF. Press 'u' to confirm and hold takeoff. <<<")
-
-    # -----------------------------------------
-    # STATE 2: Pre-Takeoff (Waiting for confirmation)
-    # -----------------------------------------
-    elif state == "PRE_TAKEOFF":
-        if hasattr(key, 'char') and key.char == 'u':
-            print("\n[Action] Holding large Takeoff button...")
-            c.tap_hold(LARGE_BTN_X, LARGE_BTN_Y, 3.0)
-            state = "FLYING"
-            print(">>> STATUS: FLYING. Joysticks active. Press 'l' to initiate landing. <<<")
-
-    # -----------------------------------------
-    # STATE 3: Flying (Listening to Joysticks)
-    # -----------------------------------------
-    elif state == "FLYING":
-        # -- Initiate Landing ('L' key) --
-        if hasattr(key, 'char') and key.char == 'l':
-            print("\n[Action] Tapping small Landing button...")
-            c.tap(SMALL_BTN_X, SMALL_BTN_Y)
-            state = "PRE_LANDING"
-            print(">>> STATUS: PRE-LANDING. Press 'k' to confirm and hold landing. <<<")
-            return
-
-        # -- Left Joystick (W, A, S, D) --
-        if hasattr(key, 'char'):
-            char = key.char.lower()
-            if char == 'w':
-                c.swipe(L_JOY_X, L_JOY_Y, L_JOY_X, L_JOY_Y - DRAG_DIST, 0.5)
-            elif char == 's':
-                c.swipe(L_JOY_X, L_JOY_Y, L_JOY_X, L_JOY_Y + DRAG_DIST, 0.5)
-            elif char == 'a':
-                c.swipe(L_JOY_X, L_JOY_Y, L_JOY_X - DRAG_DIST, L_JOY_Y, 0.5)
-            elif char == 'd':
-                c.swipe(L_JOY_X, L_JOY_Y, L_JOY_X + DRAG_DIST, L_JOY_Y, 0.5)
-
-        # -- Right Joystick (Arrow Keys) --
-        elif key == keyboard.Key.up:
-            c.swipe(R_JOY_X, R_JOY_Y, R_JOY_X, R_JOY_Y - DRAG_DIST, 0.5)
-        elif key == keyboard.Key.down:
-            c.swipe(R_JOY_X, R_JOY_Y, R_JOY_X, R_JOY_Y + DRAG_DIST, 0.5)
-        elif key == keyboard.Key.left:
-            c.swipe(R_JOY_X, R_JOY_Y, R_JOY_X - DRAG_DIST, R_JOY_Y, 0.5)
-        elif key == keyboard.Key.right:
-            c.swipe(R_JOY_X, R_JOY_Y, R_JOY_X + DRAG_DIST, R_JOY_Y, 0.5)
-
-    # -----------------------------------------
-    # STATE 4: Pre-Landing (Waiting for confirmation)
-    # -----------------------------------------
-    elif state == "PRE_LANDING":
-        if hasattr(key, 'char') and key.char == 'k':
-            print("\n[Action] Holding large Landing button...")
-            c.tap_hold(LARGE_BTN_X, LARGE_BTN_Y, 3.0)
-            state = "GROUNDED"
-            print(">>> STATUS: GROUNDED. Press 'y' to open takeoff menu. <<<")
-
-# ==========================================
-# KEYBOARD LISTENERS
-# ==========================================
-def on_press(key):
-    # Debounce logic to prevent holding a key from triggering WDA commands 30 times a second
-    k = getattr(key, 'char', key)
-    if k in active_keys:
-        return
-    active_keys.add(k)
+    # 2. Touch the screen
+    mouse.press(Button.left)
+    time.sleep(0.05) # Crucial wait for iOS to register the touch
     
+    # 3. Micro-step to the edge (forces macOS to register a continuous drag)
+    steps = 10
+    dx = (target_pos[0] - start_pos[0]) / steps
+    dy = (target_pos[1] - start_pos[1]) / steps
+    
+    for i in range(1, steps + 1):
+        mouse.position = (start_pos[0] + int(dx * i), start_pos[1] + int(dy * i))
+        time.sleep(0.01)
+
+def process_key_press(key):
     try:
-        process_controls(key)
+        if hasattr(key, 'char') and key.char:
+            k = key.char.lower()
+        else:
+            k = key.name
+
+        if k in active_keys:
+            return  
+        active_keys.add(k)
+
+        # ---------------- TAKE OFF / LANDING ----------------
+        if k == 'y':
+            print("[Action] Tapping Pre-Takeoff...")
+            mouse.position = BTN_PRE_TAKEOFF
+            mouse.click(Button.left)
+            
+        elif k == 'u':
+            print("[Action] Pressing and Holding Large Takeoff...")
+            mouse.position = BTN_LARGE_TAKEOFF
+            time.sleep(0.02)
+            mouse.press(Button.left)
+
+        elif k == 'l':
+            print("[Action] Tapping Pre-Land...")
+            mouse.position = BTN_PRE_LAND
+            mouse.click(Button.left)
+            
+        elif k == 'k':
+            print("[Action] Pressing and Holding Large Land...")
+            mouse.position = BTN_LARGE_LAND
+            time.sleep(0.02)
+            mouse.press(Button.left)
+
+        # ---------------- LEFT JOYSTICK ----------------
+        elif k in ['w', 'a', 's', 'd']:
+            print(f"[Action] Left Joystick Dragging for '{k}'...")
+            if k == 'w':   # Up
+                perform_drag(L_JOY, (L_JOY[0], L_JOY[1] - DRAG_DIST))
+            elif k == 's': # Down
+                perform_drag(L_JOY, (L_JOY[0], L_JOY[1] + DRAG_DIST))
+            elif k == 'a': # Turn Left
+                perform_drag(L_JOY, (L_JOY[0] - DRAG_DIST, L_JOY[1]))
+            elif k == 'd': # Turn Right
+                perform_drag(L_JOY, (L_JOY[0] + DRAG_DIST, L_JOY[1]))
+
+        # ---------------- RIGHT JOYSTICK ----------------
+        elif k in ['up', 'down', 'left', 'right']:
+            print(f"[Action] Right Joystick Dragging for '{k}'...")
+            if k == 'up':    # Forward
+                perform_drag(R_JOY, (R_JOY[0], R_JOY[1] - DRAG_DIST))
+            elif k == 'down':  # Backward
+                perform_drag(R_JOY, (R_JOY[0], R_JOY[1] + DRAG_DIST))
+            elif k == 'left':  # Move Left
+                perform_drag(R_JOY, (R_JOY[0] - DRAG_DIST, R_JOY[1]))
+            elif k == 'right': # Move Right
+                perform_drag(R_JOY, (R_JOY[0] + DRAG_DIST, R_JOY[1]))
+
     except Exception as e:
-        print(f"Error processing key: {e}")
+        print(f"Error on press: {e}")
 
-def on_release(key):
-    k = getattr(key, 'char', key)
-    if k in active_keys:
-        active_keys.remove(k)
-        
-    # Press ESC to stop the program safely
-    if key == keyboard.Key.esc:
-        print("Exiting flight control...")
-        return False 
+def process_key_release(key):
+    try:
+        if hasattr(key, 'char') and key.char:
+            k = key.char.lower()
+        else:
+            k = key.name
 
-# ==========================================
-# EXECUTION
-# ==========================================
-print("--- Drone Flight Control Online ---")
-print(f"Current State: {state}. Press 'y' to start.")
-print("Press 'esc' to quit entirely.")
+        if k in active_keys:
+            active_keys.remove(k)
 
-# Start listening to the keyboard
-with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-    listener.join()
+        # Release logic: Let go of mouse clicks
+        if k in ['u', 'k', 'w', 'a', 's', 'd', 'up', 'down', 'left', 'right']:
+            mouse.release(Button.left)
+            print(f"[Action] Released {k}")
+
+    except Exception as e:
+        print(f"Error on release: {e}")
+
+if __name__ == "__main__":
+    print("--- Drone Key Controller Started ---")
+    print("Press 'Esc' to quit the program.")
+    
+    with keyboard.Listener(on_press=process_key_press, on_release=process_key_release) as listener:
+        listener.join()

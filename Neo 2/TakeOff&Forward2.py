@@ -5,6 +5,8 @@ import threading
 
 mouse = MouseController()
 
+# python3 '/Users/dyv/Desktop/droneproject/Neo 2/TakeOff&Forward2.py'
+
 # --- Screen Coordinate Configuration ---
 BTN_PRE_TAKEOFF = (507, 447)   
 BTN_LARGE_TAKEOFF = (856, 534) 

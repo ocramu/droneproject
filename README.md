@@ -1,2 +1,5 @@
-# droneproject
-script used for mac and a snaptain P10 drone using snaptain sky app
+Color codes:
+Purple - Paired scripts (run together as plug/socket)
+Green/Blue - Standalone scripts (function independently)
+Red - UI scripts 
+Orange - Prototype UI Scripts

@@ -6,7 +6,9 @@ from Quartz import (
     kCGWindowListOptionIncludingWindow, kCGWindowImageDefault
 )
 
-# Paired with drone_detect-automate_Server.py
+# Paired with drone_detect-automate_Server.py; THIS should be able to run on
+# both Dylan and Lio's mac fine, will need to use computer-specific
+# server script
 
 
 print("Loading YOLO model...")
